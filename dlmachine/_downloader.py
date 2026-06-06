@@ -887,6 +887,11 @@ class RequestsDownloader(AbstractDownloader):
         logger.debug(f"Setting URL: `{self.desc['url']}`")
         self.request.url = self.desc['url']
         self.send_args['allow_redirects'] = self.desc['followlocation']
+        # Stream the response: without this, requests buffers the ENTIRE body
+        # into resp.content (RAM) before iter_content() runs, so a large download
+        # peaks at ~its full size in memory. With stream=True iter_content reads
+        # from the socket incrementally and writes straight to the destination.
+        self.send_args['stream'] = True
         self.send_args['timeout'] = (
             self.desc['connecttimeout'],
             self.desc['timeout'],
