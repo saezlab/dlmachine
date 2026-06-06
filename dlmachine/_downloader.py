@@ -87,6 +87,9 @@ class AbstractDownloader(abc.ABC):
         self.desc = desc
         self._downloaded = 0
         self._expected_size = 0
+        # Set before open_dest() runs so size/ok are safe to query on a
+        # downloader that was created but whose download() never executed.
+        self._destination = None
         self.http_code = 0
         self._progress_bar = None
         self._show_progress = progress

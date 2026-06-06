@@ -266,6 +266,15 @@ class DownloadManager:
 
         logger.debug(f'Downloading to buffer {to_buffer}')
 
+        # Candidate request URLs: the primary (desc['url']) followed by any
+        # fallback mirrors. They all map to a single cache item -- its identity
+        # is keyed on `baseurl` (the primary) and DL_ATTRS, neither of which
+        # includes the fallbacks -- so a file served by any mirror is found and
+        # stored under the same entry. Captured before the loop because the
+        # per-attempt request URL (desc['url']) is rewritten below.
+        candidate_urls = [desc['url']] + list(desc['fallback_urls'] or [])
+        logger.debug('Candidate URLs (primary + fallbacks): %s', candidate_urls)
+
         for i in range(retries or 1):
             logger.info('Download attempt %d/%d', i + 1, retries or 1)
 
@@ -367,10 +376,11 @@ class DownloadManager:
 
                         item.status = Status.UNINITIALIZED.value
 
-            # Instantiate the downloader (no download yet)
-            downloader = downloader_cls(desc, path, progress=show_progress)
-
-            # Perform the download or break the loop when ok or already in cache
+            # Perform the download (trying each candidate URL in order) or break
+            # the loop when the item is already valid in the cache. The
+            # downloader is created ONLY in the download branch: on a cache hit
+            # `downloader` stays None, so the post-loop ok-check is skipped (a
+            # created-but-unrun downloader would crash there on `_destination`).
             if (
                 force_download or
                 not item or
@@ -380,25 +390,38 @@ class DownloadManager:
                 logger.info('No valid version in cache, starting download')
 
                 self._report_started(item)
-                downloader.download()
-                self._report_finished(item, downloader, desc)
 
-                if downloader.ok:
+                # Try the primary URL, then each fallback mirror in order. Only
+                # the per-attempt request URL (desc['url']) changes; the cache
+                # identity (baseurl) does not.
+                for cand_url in candidate_urls:
 
-                    logger.info(
-                        'Download succeeded http_code=%s path=%r to_buffer=%s',
-                        downloader.http_code,
-                        path,
-                        to_buffer,
+                    desc['url'] = cand_url
+                    downloader = downloader_cls(
+                        desc, path, progress=show_progress,
+                    )
+                    downloader.download()
+
+                    if downloader.ok:
+
+                        desc['resolved_url'] = cand_url
+                        logger.info(
+                            'Download succeeded from %s http_code=%s path=%r '
+                            'to_buffer=%s',
+                            cand_url, downloader.http_code, path, to_buffer,
+                        )
+                        break
+
+                    logger.warning(
+                        'Download from %s not successful http_code=%s; '
+                        'trying next mirror if any',
+                        cand_url, downloader.http_code,
                     )
 
-                    break
+                self._report_finished(item, downloader, desc)
 
-                logger.warning(
-                    'Download attempt %d completed but not successful http_code=%s',
-                    i + 1,
-                    downloader.http_code,
-                )
+                if downloader and downloader.ok:
+                    break
 
             else:
 
@@ -420,7 +443,7 @@ class DownloadManager:
             desc,
             item,
             downloader,
-            downloader._destination if to_buffer else path,
+            downloader._destination if (to_buffer and downloader) else path,
         )
 
 
