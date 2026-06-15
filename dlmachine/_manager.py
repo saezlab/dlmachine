@@ -217,28 +217,21 @@ class DownloadManager:
         )
         # Backend selection. CurlDownloader (pycurl) and RequestsDownloader are
         # interchangeable alternatives -- both stream straight to the
-        # destination file with bounded memory. When `backend` is unset, prefer
-        # curl if pycurl is importable, otherwise requests. An explicit
-        # `backend=curl` with pycurl missing falls back to requests with a
-        # warning instead of crashing later on `pycurl.Curl()`.
-        configured = self.config.get('backend')
+        # destination file with bounded memory. The default is `requests`
+        # (no native dependency, works everywhere); curl is opt-in via
+        # `backend=curl`. Installing pycurl does NOT silently change the active
+        # backend. An explicit `backend=curl` with pycurl missing falls back to
+        # requests with a warning instead of crashing later on `pycurl.Curl()`.
+        backend = self.config.get('backend', 'requests').capitalize()
         have_pycurl = _downloader.pycurl is not None
 
-        if configured:
+        if backend == 'Curl' and not have_pycurl:
 
-            backend = configured.capitalize()
-
-            if backend == 'Curl' and not have_pycurl:
-
-                logger.warning(
-                    'backend=curl requested but pycurl is not installed; '
-                    'falling back to the requests backend',
-                )
-                backend = 'Requests'
-
-        else:
-
-            backend = 'Curl' if have_pycurl else 'Requests'
+            logger.warning(
+                'backend=curl requested but pycurl is not installed; '
+                'falling back to the requests backend',
+            )
+            backend = 'Requests'
 
         logger.debug('Resolved backend class prefix: %s', backend)
         downloader_cls = getattr(_downloader, f'{backend}Downloader')
