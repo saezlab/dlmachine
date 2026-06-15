@@ -215,11 +215,35 @@ class DownloadManager:
                 if isinstance(url, Descriptor) else
             Descriptor(url, **kwargs)
         )
-        backend = self.config.get('backend', 'requests').capitalize()
+        # Backend selection. CurlDownloader (pycurl) and RequestsDownloader are
+        # interchangeable alternatives -- both stream straight to the
+        # destination file with bounded memory. When `backend` is unset, prefer
+        # curl if pycurl is importable, otherwise requests. An explicit
+        # `backend=curl` with pycurl missing falls back to requests with a
+        # warning instead of crashing later on `pycurl.Curl()`.
+        configured = self.config.get('backend')
+        have_pycurl = _downloader.pycurl is not None
+
+        if configured:
+
+            backend = configured.capitalize()
+
+            if backend == 'Curl' and not have_pycurl:
+
+                logger.warning(
+                    'backend=curl requested but pycurl is not installed; '
+                    'falling back to the requests backend',
+                )
+                backend = 'Requests'
+
+        else:
+
+            backend = 'Curl' if have_pycurl else 'Requests'
+
         logger.debug('Resolved backend class prefix: %s', backend)
         downloader_cls = getattr(_downloader, f'{backend}Downloader')
 
-        logger.debug(f'Using backend: {backend}')
+        logger.info('Using download backend: %s', backend)
 
         show_progress = self.config.get('progress', True)
 
@@ -489,7 +513,12 @@ class DownloadManager:
                 older_than = older_than,
                 newer_than = newer_than,
                 new_status = Status.UNINITIALIZED.value,
-                status = {Status.READY.value, Status.WRITE.value},
+                # Only reuse a *completed* (READY) cache item. A WRITE item is a
+                # download that started but never finished (interrupted, crashed,
+                # or OOM-killed): its file is missing or partial. Reusing it
+                # would silently serve truncated data, so we exclude it here --
+                # best_or_new() then creates a fresh item and re-downloads.
+                status = {Status.READY.value},
             )
 
             logger.info(
